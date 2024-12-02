@@ -1,0 +1,443 @@
+---
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+```{r}
+# Load required libraries
+library(tidyverse)
+library(caret)
+library(ggplot2)
+library(randomForest)
+library(e1071)
+library(pROC)
+library(gridExtra)
+library(xgboost)  
+library(nnet)
+
+suppressPackageStartupMessages({
+library(tidyverse)
+library(caret)
+library(ggplot2)
+library(randomForest)
+library(e1071)
+library(pROC)
+library(gridExtra)
+library(xgboost)  
+library(nnet)
+})
+```
+
+
+```{r}
+# Step 1: Load and explore the data
+loan_data <- read.csv("D:/project/Loan_default_updated.csv")
+
+# View the structure of the data
+str(loan_data)
+
+# Summary statistics
+summary(loan_data)
+```
+
+
+```{r}
+# Step 2: Data preprocessing
+# Convert categorical variables to factors
+loan_data$Education <- as.factor(loan_data$Education)
+loan_data$EmploymentType <- as.factor(loan_data$EmploymentType)
+loan_data$MaritalStatus <- as.factor(loan_data$MaritalStatus)
+loan_data$LoanPurpose <- as.factor(loan_data$LoanPurpose)
+```
+
+
+```{r}
+# Convert binary variables to factors
+loan_data$HasMortgage <- as.factor(loan_data$HasMortgage)
+loan_data$HasDependents <- as.factor(loan_data$HasDependents)
+loan_data$HasCoSigner <- as.factor(loan_data$HasCoSigner)
+loan_data$Default <- as.factor(loan_data$Default)
+```
+
+
+
+```{r}
+# Step 2: Enhanced Data Visualization
+
+# 1. Distribution of Age
+p1 <- ggplot(loan_data, aes(x = Age, fill = Default)) +
+  geom_histogram(binwidth = 5, position = "dodge") +
+  labs(title = "Distribution of Age by Default Status", x = "Age", y = "Count") +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"))
+print(p1)
+
+# 2. Loan Amount by Default status
+p2 <- ggplot(loan_data, aes(x = Default, y = LoanAmount, fill = Default)) +
+  geom_boxplot() +
+  labs(title = "Loan Amount by Default Status", x = "Default", y = "Loan Amount") +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"))
+print(p2)
+
+# 3. Income vs LoanAmount, colored by Default status
+p3 <- ggplot(loan_data, aes(x = Income, y = LoanAmount, color = Default)) +
+  geom_point(alpha = 0.7) +
+  labs(title = "Income vs Loan Amount", x = "Income", y = "Loan Amount") +
+  scale_color_manual(values = c("0" = "blue", "1" = "red"))
+print(p3)
+
+# 4. Default Rate by Education
+p4 <- loan_data %>%
+  group_by(Education) %>%
+  summarise(
+    DefaultCount = sum(Default == "1"),
+    TotalCount = n(),
+    DefaultRate = DefaultCount / TotalCount
+  ) %>%
+  ggplot(aes(x = Education, y = TotalCount)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  geom_bar(aes(y = DefaultCount), stat = "identity", fill = "red") +
+  geom_text(aes(label = sprintf("%.1f%%", DefaultRate*100), y = TotalCount), vjust = -0.5) +
+  labs(
+    title = "Loan Defaults by Education Level",
+    x = "Education",
+    y = "Number of Loans",
+    caption = "Red bars show number of defaults\nPercentages show default rate"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+print(p4)
+
+# 5. Distribution of Credit Score by Default Status
+p5 <- ggplot(loan_data, aes(x = CreditScore, fill = Default)) +
+  geom_density(alpha = 0.7) +
+  labs(title = "Distribution of Credit Score by Default Status", x = "Credit Score", y = "Density") +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"))
+print(p5)
+
+# 6. Interest Rate by Loan Purpose
+p6 <- ggplot(loan_data, aes(x = LoanPurpose, y = InterestRate, fill = Default)) +
+  geom_boxplot() +
+  labs(title = "Interest Rate by Loan Purpose and Default Status", x = "Loan Purpose", y = "Interest Rate") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"))
+print(p6)
+```
+
+
+```{r}
+# 7. Defaults by Credit Score Range
+p7 <- loan_data %>%
+  mutate(CreditScoreRange = cut(CreditScore, breaks = seq(300, 900, by = 100),include.lowest = TRUE, right = FALSE)) %>%
+  group_by(CreditScoreRange) %>%
+  summarise(
+    DefaultCount = sum(Default == "1"),
+    TotalCount = n(),
+    DefaultRate = DefaultCount / TotalCount
+  ) %>%
+  ggplot(aes(x = CreditScoreRange, y = TotalCount)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  geom_bar(aes(y = DefaultCount), stat = "identity", fill = "red") +
+  geom_text(aes(label = sprintf("%.1f%%", DefaultRate*100), y = TotalCount), vjust = -0.5) +
+  labs(
+    title = "Loan Defaults by Credit Score Range",
+    x = "Credit Score Range",
+    y = "Number of Loans",
+    caption = "Red bars show number of defaults\nPercentages show default rate"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+print(p7)
+```
+
+
+```{r}
+# 8. Defaults by DTI Ratio
+p8 <- loan_data %>%
+  mutate(DTIRange = cut(DTIRatio, breaks = seq(0, 1, by = 0.1),include.lowest = TRUE, right = FALSE)) %>%
+  group_by(DTIRange) %>%
+  summarise(
+    DefaultCount = sum(Default == "1"),
+    TotalCount = n(),
+    DefaultRate = DefaultCount / TotalCount
+  ) %>%
+  ggplot(aes(x = DTIRange, y = TotalCount)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  geom_bar(aes(y = DefaultCount), stat = "identity", fill = "red") +
+  geom_text(aes(label = sprintf("%.1f%%", DefaultRate*100), y = TotalCount), vjust = -0.5) +
+  labs(
+    title = "Loan Defaults by DTI Ratio",
+    x = "DTI Ratio Range",
+    y = "Number of Loans",
+    caption = "Red bars show number of defaults\nPercentages show default rate"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+print(p8)
+```
+
+
+```{r}
+
+# 9. Defaults by Age Group and Employment Type
+p9 <- loan_data %>%
+  mutate(AgeGroup = cut(Age, breaks = c(0, 30, 40, 50, 60, 100), 
+                        labels = c("18-30", "31-40", "41-50", "51-60", "60+"))) %>%
+  group_by(AgeGroup, EmploymentType) %>%
+  summarise(
+    DefaultCount = sum(Default == "1"),
+    TotalCount = n(),
+    DefaultRate = DefaultCount / TotalCount,
+    .groups = 'drop'  # Explicitly drop grouping after summarizing
+  ) %>%
+  ggplot(aes(x = AgeGroup, y = TotalCount, fill = EmploymentType)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_bar(aes(y = DefaultCount), stat = "identity", position = "dodge", alpha = 0.5) +
+  geom_text(aes(label = sprintf("%.1f%%", DefaultRate * 100), y = TotalCount), 
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +
+  labs(
+    title = "Loan Defaults by Age Group and Employment Type",
+    x = "Age Group", 
+    y = "Number of Loans",
+    caption = "Lighter bars show number of defaults\nPercentages show default rate"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+print(p9)
+
+# 10. Defaults by Number of Credit Lines and Loan Purpose
+p10 <- loan_data %>%
+  group_by(NumCreditLines, LoanPurpose) %>%
+  summarise(
+    DefaultCount = sum(Default == "1"),
+    TotalCount = n(),
+    DefaultRate = DefaultCount / TotalCount,
+    .groups = 'drop'  # Explicitly drop grouping after summarizing
+  ) %>%
+  ggplot(aes(x = as.factor(NumCreditLines), y = TotalCount, fill = LoanPurpose)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_bar(aes(y = DefaultCount), stat = "identity", position = "dodge", alpha = 0.5) +
+  geom_text(aes(label = sprintf("%.1f%%", DefaultRate * 100), y = TotalCount), 
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +
+  labs(
+    title = "Loan Defaults by Number of Credit Lines and Loan Purpose",
+    x = "Number of Credit Lines", 
+    y = "Number of Loans",
+    caption = "Lighter bars show number of defaults\nPercentages show default rate"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+print(p10)
+
+# Correlation heatmap for numerical variables
+numeric_vars <- loan_data %>% select_if(is.numeric)
+cor_matrix <- cor(numeric_vars)
+p11 <- ggplot(data = reshape2::melt(cor_matrix)) +
+  geom_tile(aes(x = Var1, y = Var2, fill = value)) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Correlation Heatmap of Numeric Variables")
+print(p11)
+
+```
+
+
+
+
+```{r}
+# Step 4: Split the data into training and testing sets
+set.seed(123)
+trainIndex <- createDataPartition(loan_data$Default, p = 0.8, list = FALSE)
+train_data <- loan_data[trainIndex,]
+test_data <- loan_data[-trainIndex,]
+```
+
+```{r}
+# Step 5: Define the model formula
+model_formula <- Default ~ Age + Income + LoanAmount + CreditScore + MonthsEmployed + NumCreditLines + InterestRate + LoanTerm + DTIRatio + Education +EmploymentType + MaritalStatus + HasMortgage + HasDependents +LoanPurpose + HasCoSigner
+```
+
+```{r}
+# Step 6: Train models
+
+# Logistic Regression
+logit_model <- glm(model_formula, data = train_data, family = "binomial")
+
+# Random Forest
+rf_model <- randomForest(model_formula, data = train_data)
+
+# Support Vector Machine
+svm_model <- svm(model_formula, data = train_data, kernel = "radial", probability = TRUE)
+
+# XGBoost 
+train_matrix <- model.matrix(model_formula, data = train_data)[,-1]
+test_matrix <- model.matrix(model_formula, data = test_data)[,-1]
+dtrain <- xgb.DMatrix(data = train_matrix, label = as.numeric(train_data$Default) - 1)
+xgb_model <- xgboost(data = dtrain, nrounds = 100, objective = "binary:logistic")
+
+
+# Neural Network
+nn_model <- nnet(model_formula, data = train_data, size = 5, maxit = 1000)
+```
+
+
+```{r}
+# Step 7: Make predictions on test data
+logit_pred <- predict(logit_model, newdata = test_data, type = "response")
+rf_pred <- predict(rf_model, newdata = test_data, type = "prob")[,2]
+svm_pred <- predict(svm_model, newdata = test_data, probability = TRUE)
+xgb_pred <- predict(xgb_model, newdata = test_matrix)
+nn_pred <- predict(nn_model, newdata = test_data, type = "raw")
+```
+
+
+
+
+```{r}
+
+# Function to calculate metrics
+calculate_metrics <- function(actual, predicted, threshold = 0.5) {
+  predicted_class <- factor(ifelse(predicted > threshold, "1", "0"), levels = levels(actual))
+  cm <- confusionMatrix(predicted_class, actual)
+  auc <- as.numeric(roc(actual, predicted)$auc)
+  
+  data.frame(
+    Accuracy = cm$overall["Accuracy"],
+    Precision = cm$byClass["Precision"],
+    Recall = cm$byClass["Recall"],
+    F1_Score = cm$byClass["F1"],
+    AUC = auc
+  )
+}
+
+# Calculate metrics for each model
+logit_pred_class <- factor(ifelse(logit_pred > 0.5, "1", "0"), levels = levels(test_data$Default))
+logit_metrics <- calculate_metrics(test_data$Default, logit_pred)
+
+rf_pred_class <- factor(ifelse(rf_pred > 0.5, "1", "0"), levels = levels(test_data$Default))
+rf_metrics <- calculate_metrics(test_data$Default, rf_pred)
+
+svm_pred_class <- factor(ifelse(attr(svm_pred, "probabilities")[,2] > 0.5, "1", "0"), levels = levels(test_data$Default))
+svm_metrics <- calculate_metrics(test_data$Default, attr(svm_pred, "probabilities")[,2])
+
+xgb_pred_class <- factor(ifelse(xgb_pred > 0.5, "1", "0"), levels = levels(test_data$Default))
+xgb_metrics <- calculate_metrics(test_data$Default, xgb_pred)
+
+nn_pred_class <- factor(ifelse(as.vector(nn_pred) > 0.5, "1", "0"), levels = levels(test_data$Default))
+nn_metrics <- calculate_metrics(test_data$Default, as.vector(nn_pred))
+
+# Combine all metrics
+all_metrics <- rbind(
+  cbind(Model = "Logistic Regression", logit_metrics),
+  cbind(Model = "Random Forest", rf_metrics),
+  cbind(Model = "SVM", svm_metrics),
+  cbind(Model = "XGBoost", xgb_metrics),
+  cbind(Model = "Neural Network", nn_metrics)
+)
+
+print(all_metrics)
+
+```
+
+
+
+
+
+```{r}
+# Step 9: Visualize model performance
+metrics_long <- all_metrics %>%
+  pivot_longer(cols = -Model, names_to = "Metric", values_to = "Value")
+
+# Create a custom color palette
+model_colors <- c("Logistic Regression" = "#FF9999", # Light red
+                  "Random Forest" = "#66B2FF",       # Light blue
+                  "SVM" = "#99FF99",                 # Light green
+                  "XGBoost" = "#FFCC99",             # Light orange
+                  "Neural Network" = "#FF99FF")      # Light purple
+
+# Create the plot
+ggplot(metrics_long, aes(x = Value, y = Model, color = Model)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(xmin = Value, xmax = Value), width = 0.2) +
+  facet_wrap(~ Metric, scales = "free_x", ncol = 3) +
+  labs(title = "Model Performance Metrics Comparison",
+       x = "Value",
+       y = "Model") +
+  scale_color_manual(values = model_colors) +
+  theme_minimal() +
+  theme(strip.background = element_rect(fill = "lightgray"),
+        strip.text = element_text(face = "bold"))
+```
+
+
+```{r}
+# Step 10: Variable Importance (for Random Forest)
+varImpPlot(rf_model, main = "Variable Importance Plot")
+```
+
+
+```{r}
+# Step 11: ROC Curve Comparison
+plot(roc(test_data$Default, logit_pred), col = "blue", main = "ROC Curve Comparison")
+plot(roc(test_data$Default, rf_pred), col = "red", add = TRUE)
+plot(roc(test_data$Default, attr(svm_pred, "probabilities")[,2]), col = "green", add = TRUE)
+plot(roc(test_data$Default, xgb_pred), col = "orange", add = TRUE)
+plot(roc(test_data$Default, as.vector(nn_pred)), col = "purple", add = TRUE)
+legend("bottomright", legend = c("Logistic Regression", "Random Forest", "SVM", "XGBoost", "Neural Network"), 
+       col = c("blue", "red", "green", "orange", "purple"), lwd = 2)
+
+
+```
+
+
+```{r}
+# Step 12: Enhanced Risk Scoring System
+# Calculate risk scores (probability of default)
+risk_scores <- predict(rf_model, newdata = loan_data, type = "prob")[,2]
+
+# Create risk categories
+risk_categories <- cut(risk_scores, 
+                       breaks = c(0, 0.2, 0.4, 0.6, 0.8, 1),
+                       labels = c("Very Low", "Low", "Medium", "High", "Very High"),include.lowest = TRUE, right = FALSE)
+
+# Add risk scores and categories to the original data
+loan_data$RiskScore <- risk_scores
+loan_data$RiskCategory <- risk_categories
+
+# Distribution of Risk Scores
+p12 <- ggplot(loan_data, aes(x = RiskScore, fill = Default)) +
+  geom_histogram(bins = 50, position = "identity", alpha = 0.7) +
+  labs(title = "Distribution of Risk Scores by Default Status", 
+       x = "Risk Score", y = "Count") +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"))
+print(p12)
+
+# Default Rate by Risk Category
+p13 <- loan_data %>%
+  group_by(RiskCategory) %>%
+  summarise(
+    DefaultCount = sum(Default == "1"),
+    TotalCount = n(),
+    DefaultRate = DefaultCount / TotalCount
+  ) %>%
+  ggplot(aes(x = RiskCategory, y = TotalCount)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  geom_bar(aes(y = DefaultCount), stat = "identity", fill = "red") +
+  geom_text(aes(label = sprintf("%.1f%%", DefaultRate*100), y = TotalCount), vjust = -0.5) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "Loan Defaults by Risk Category",
+    x = "Risk Category",
+    y = "Number of Loans",
+    caption = "Red bars show number of defaults\nPercentages show default rate"
+  )
+print(p13)
+
+# Average Risk Score by Categorical Variables
+p14 <- loan_data %>%
+  group_by(Education) %>%
+  summarise(AvgRiskScore = mean(RiskScore)) %>%
+  ggplot(aes(x = Education, y = AvgRiskScore)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = sprintf("%.3f", AvgRiskScore)), vjust = -0.5) +
+  labs(title = "Average Risk Score by Education Level", x = "Education", y = "Average Risk Score") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+print(p14)
+
+```
+
